@@ -8,6 +8,7 @@ targets:
     type: application
     platform: iOS
     sources: [FlavortownFinder]
+    scheme: {}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.absinthe007.flavortownfinder
