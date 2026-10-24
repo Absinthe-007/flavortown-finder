@@ -122,3 +122,29 @@ main { padding-bottom: calc(var(--tabH) + var(--safeB) + 12px); }
 .spinner { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--flame); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 30px auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .foot { font-size: 11px; color: var(--muted); padding: 18px 16px; text-align: center; }
+
+/* multi-stop trip */
+.form select { width: 100%; margin-top: 6px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px 10px; font: inherit; }
+.form label select { width: auto; display: inline-block; margin: 0 4px; padding: 6px 8px; }
+.row2 { display: grid; grid-template-columns: 1.5fr 1fr; gap: 10px; align-items: end; }
+.row2 select { width: 100% !important; display: block !important; margin: 6px 0 0 !important; padding: 12px 8px !important; }
+.stopRow { display: flex; gap: 6px; align-items: center; margin: 0 0 10px; }
+.stopRow .num { width: 24px; height: 24px; border-radius: 50%; background: var(--flame); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; }
+.stopRow input { flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; outline: none; }
+.stopRow button { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; width: 34px; height: 40px; flex-shrink: 0; font-size: 14px; }
+.addStop { width: 100%; background: none; border: 1px dashed var(--line); color: var(--flame2); border-radius: 12px; padding: 10px; margin: 0 0 12px; font-weight: 600; }
+.itin { list-style: none; margin: 0; padding: 0; }
+.itin li { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; align-items: center; }
+.itin li:last-child { border: none; }
+.itin .dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; background: var(--flame); flex-shrink: 0; }
+.itin .dot.s { background: #4a8cff; } .itin .dot.e { background: var(--open); }
+.itin .when { margin-left: auto; text-align: right; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.onRoute { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.onRoute:last-child { border: none; }
+.onRoute .body { flex: 1; min-width: 0; cursor: pointer; }
+.onRoute b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onRoute small { color: var(--muted); font-size: 12px; }
+.onRoute .add { background: rgba(255,90,31,.15); color: var(--flame2); border: 1px solid rgba(255,90,31,.4); border-radius: 10px; padding: 7px 10px; font-size: 13px; font-weight: 700; flex-shrink: 0; }
+.onRoute .add[disabled] { opacity: .5; }
+.wpPin { width: 22px; height: 22px; border-radius: 50%; color: #fff; font: 700 11px/22px -apple-system, sans-serif; text-align: center; border: 2px solid #fff; background: var(--flame); }
+.dddPin { font-size: 16px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }

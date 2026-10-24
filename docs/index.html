@@ -57,17 +57,25 @@
   <!-- TRIP -->
   <section class="view" id="view-trip">
     <div class="card form">
-      <label>Starting from
-        <div class="row"><input id="fromInput" placeholder="City, address, or ZIP"><button class="iconBtn" id="fromGps" title="Use my location">📍</button></div>
+      <label>Start
+        <div class="row"><input id="fromInput" placeholder="City, address, or ZIP" list="toList" autocomplete="off"><button class="iconBtn" id="fromGps" title="Use my location">📍</button></div>
       </label>
-      <label>Headed to
-        <input id="toInput" placeholder="Pick a Triple D spot" list="toList" autocomplete="off">
-        <datalist id="toList"></datalist>
+      <div id="stops"></div>
+      <button class="addStop" id="addStop" type="button">＋ Add a stop</button>
+      <label>Destination
+        <input id="toInput" placeholder="A Triple D spot or any city/address" list="toList" autocomplete="off">
       </label>
-      <label>Leaving
-        <input type="datetime-local" id="departAt">
+      <datalist id="toList"></datalist>
+      <div class="row2">
+        <label>Leaving <input type="datetime-local" id="departAt"></label>
+        <label>Time per stop
+          <select id="dwell"><option value="0">None</option><option value="30">30 min</option><option value="45" selected>45 min</option><option value="60">1 hr</option><option value="90">1.5 hr</option><option value="120">2 hr</option></select>
+        </label>
+      </div>
+      <label>Show Triple D spots within
+        <select id="radius"><option value="5">5 mi</option><option value="10" selected>10 mi</option><option value="25">25 mi</option><option value="50">50 mi</option></select> of my route
       </label>
-      <button class="primary" id="goTrip">Get route weather</button>
+      <button class="primary" id="goTrip">Plan trip</button>
     </div>
     <div id="tripOut"></div>
   </section>

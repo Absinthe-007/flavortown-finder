@@ -41,7 +41,7 @@
     state.all.forEach((r) => state.byId.set(r.id, r));
     const upd = new Date(d.meta.generated);
     $("#metaLine").textContent = `${d.meta.count.toLocaleString()} spots · ${d.meta.open} verified open · updated ${upd.toLocaleDateString()}`;
-    $("#toList").innerHTML = state.all.filter((r) => r.lat).map((r) => `<option value="${esc(`${r.name} — ${r.city}, ${r.state}`)}">`).join("");
+    $("#toList").innerHTML = state.all.filter((r) => r.lat && visible(r)).map((r) => `<option value="${esc(`${r.name} — ${r.city}, ${r.state}`)}">`).join("");
     renderStates();
     renderRecipes();
     if (location.hash.startsWith("#r=")) openDetail(decodeURIComponent(location.hash.slice(3)));
@@ -144,7 +144,8 @@
         <div class="stat"><b>${esc(r.price || "—")}</b><small>price</small></div>
       </div>
       <div class="actions">
-        <button class="btn primary" data-trip="${esc(r.id)}">🚗 Route weather to here</button>
+        <button class="btn primary" data-trip="${esc(r.id)}">🚗 Plan a trip here</button>
+        <button class="btn" style="grid-column:1/-1" data-asstop="${esc(r.id)}">＋ Add as a stop on my trip</button>
         <a class="btn" href="https://maps.apple.com/?daddr=${encodeURIComponent(dest)}" target="_blank" rel="noopener">Apple Maps</a>
         <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}" target="_blank" rel="noopener">Directions (Google)</a>
         ${r.phone ? `<a class="btn" href="tel:${esc(r.phone.replace(/[^0-9+]/g, ""))}">📞 Call</a>` : ""}
@@ -226,40 +227,116 @@
     return bestD < 15 ? best : "Outside U.S.";
   }
 
+  // ---- multi-stop helpers
+  const dddLabel = (r) => `${r.name} — ${r.city}, ${r.state}`;
+  const findDDD = (txt) => state.all.find((r) => r.lat != null && dddLabel(r) === txt.trim());
+
+  function stopInputs() { return $$("#stops input"); }
+  function renderStopRows(values) {
+    $("#stops").innerHTML = values.map((v, i) => `<div class="stopRow" data-i="${i}">
+      <span class="num">${i + 1}</span>
+      <input value="${esc(v)}" placeholder="Stop ${i + 1}: Triple D spot or any place" list="toList" autocomplete="off">
+      <button type="button" data-move="-1" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
+      <button type="button" data-move="1" title="Move down" ${i === values.length - 1 ? "disabled" : ""}>↓</button>
+      <button type="button" data-remove title="Remove">✕</button></div>`).join("");
+  }
+  const stopValues = () => stopInputs().map((i) => i.value);
+  function addStop(value = "", index = null) {
+    const v = stopValues();
+    if (index == null || index > v.length) v.push(value); else v.splice(index, 0, value);
+    renderStopRows(v);
+    if (!value) stopInputs()[index ?? v.length - 1]?.focus();
+  }
+
+  async function resolvePlace(txt) {
+    const r = findDDD(txt);
+    if (r) return { lat: r.lat, lon: r.lon, label: r.name, ddd: r };
+    const g = await geocodeText(txt);
+    return { ...g, label: g.label || txt };
+  }
+
+  async function osrm(points) {
+    const path = points.map((p) => `${p.lon},${p.lat}`).join(";") + "?overview=full&geometries=geojson&annotations=duration,distance";
+    for (const base of ["https://routing.openstreetmap.de/routed-car/route/v1/driving/", "https://router.project-osrm.org/route/v1/driving/"]) {
+      try { const r = await getJSON(base + path); if (r.routes?.length) return r.routes[0]; } catch (_) {}
+    }
+    throw new Error("the routing service is busy or couldn't find a driving route");
+  }
+
+  // fast planar distance (km) good enough for "within N miles of the route"
+  const flatKm = (lat1, lon1, lat2, lon2) => { const x = (lon2 - lon1) * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180), y = lat2 - lat1; return Math.sqrt(x * x + y * y) * 111.195; };
+
+  function dddAlongRoute(coords, cumD, radiusKm, exclude) {
+    // decimate route to ~2 km spacing
+    const pts = [];
+    for (let i = 0, last = -1e9; i < coords.length; i++) if (cumD[i] - last >= 2000 || i === coords.length - 1) { pts.push([coords[i][1], coords[i][0], cumD[i], i]); last = cumD[i]; }
+    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+    for (const [la, lo] of pts) { minLat = Math.min(minLat, la); maxLat = Math.max(maxLat, la); minLon = Math.min(minLon, lo); maxLon = Math.max(maxLon, lo); }
+    const pad = radiusKm / 80;
+    const out = [];
+    for (const r of state.all) {
+      if (r.lat == null || !visible(r) || exclude.has(r.id)) continue;
+      if (r.lat < minLat - pad || r.lat > maxLat + pad || r.lon < minLon - pad * 1.6 || r.lon > maxLon + pad * 1.6) continue;
+      let best = 1e9, at = null;
+      for (const p of pts) { const d = flatKm(r.lat, r.lon, p[0], p[1]); if (d < best) { best = d; at = p; } }
+      if (best <= radiusKm) out.push({ r, offKm: best, routeM: at[2], vtx: at[3] });
+    }
+    return out.sort((a, b) => a.routeM - b.routeM);
+  }
+
   async function planTrip() {
     const out = $("#tripOut");
     const fromQ = $("#fromInput").value.trim(), toQ = $("#toInput").value.trim();
-    const dest = state.all.find((r) => `${r.name} — ${r.city}, ${r.state}` === toQ) || state.all.find((r) => r.lat && r.name.toLowerCase() === toQ.toLowerCase());
+    const stopsQ = stopValues().map((v) => v.trim()).filter(Boolean);
     if (!fromQ) return (out.innerHTML = `<div class="alert">Enter where you're starting from (or tap 📍).</div>`);
-    if (!dest) return (out.innerHTML = `<div class="alert">Pick a restaurant from the suggestions, or tap “Route weather to here” on any spot.</div>`);
-    out.innerHTML = `<div class="spinner"></div><p class="muted" style="text-align:center">Mapping the drive and checking the skies…</p>`;
+    if (!toQ) return (out.innerHTML = `<div class="alert">Enter a destination — any Triple D spot, city, or address.</div>`);
+    out.innerHTML = `<div class="spinner"></div><p class="muted" style="text-align:center">Mapping ${stopsQ.length ? stopsQ.length + 2 + " stops" : "the drive"} and checking the skies…</p>`;
     try {
-      const from = await geocodeText(fromQ);
+      const wps = [];
+      for (const q of [fromQ, ...stopsQ, toQ]) wps.push(await resolvePlace(q));
+      if (wps.length > 25) throw new Error("that's more than 23 stops");
       const depart = $("#departAt").value ? new Date($("#departAt").value) : new Date();
-      const path = `${from.lon},${from.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson&annotations=duration,distance`;
-      let route;
-      for (const base of ["https://routing.openstreetmap.de/routed-car/route/v1/driving/", "https://router.project-osrm.org/route/v1/driving/"]) {
-        try { route = await getJSON(base + path); if (route.routes?.length) break; } catch (_) {}
-      }
-      if (!route) throw new Error("routing service is busy");
-      if (!route.routes?.length) throw new Error("No driving route found.");
-      const rt = route.routes[0], coords = rt.geometry.coordinates, ann = rt.legs[0].annotation;
-      // cumulative distance & time per vertex
+      const dwellS = (+$("#dwell").value || 0) * 60;
+      const radiusKm = (+$("#radius").value || 25) * 1.609;
+      const rt = await osrm(wps);
+      const coords = rt.geometry.coordinates;
+
+      // cumulative distance/time per vertex, adding dwell time after each intermediate stop
+      const ann = { distance: [], duration: [] };
+      const legEndVertex = [];
+      rt.legs.forEach((leg) => { ann.distance.push(...leg.annotation.distance); ann.duration.push(...leg.annotation.duration); legEndVertex.push(ann.distance.length); });
+      const n = Math.min(coords.length - 1, ann.distance.length);
       const cumD = [0], cumT = [0];
-      for (let i = 0; i < ann.distance.length; i++) { cumD.push(cumD[i] + ann.distance[i]); cumT.push(cumT[i] + ann.duration[i]); }
-      const totalKm = rt.distance / 1000;
-      const step = Math.max(64, totalKm / 60) * 1000; // ~every 40 miles, max 60 checkpoints
+      let li = 0;
+      for (let i = 0; i < n; i++) {
+        let t = cumT[i] + ann.duration[i];
+        cumD.push(cumD[i] + ann.distance[i]);
+        if (li < legEndVertex.length - 1 && i + 1 === legEndVertex[li]) { t += dwellS; li++; }
+        cumT.push(t);
+      }
+      while (cumD.length < coords.length) { cumD.push(cumD[cumD.length - 1]); cumT.push(cumT[cumT.length - 1]); }
+      const totalM = cumD[cumD.length - 1];
+      const totalDwell = dwellS * Math.max(0, wps.length - 2);
+
+      // waypoint timeline
+      const itin = wps.map((w, i) => {
+        const v = i === 0 ? 0 : Math.min(legEndVertex[i - 1], coords.length - 1);
+        const arrive = new Date(depart.getTime() + (cumT[v] - (i > 0 && i < wps.length - 1 ? dwellS : 0)) * 1000);
+        return { ...w, kind: i === 0 ? "s" : i === wps.length - 1 ? "e" : "m", n: i, km: cumD[v] / 1000, arrive, leave: new Date(arrive.getTime() + (i > 0 && i < wps.length - 1 ? dwellS * 1000 : 0)), vtx: v };
+      });
+
+      // weather checkpoints ~ every 40 mi, plus every stop
+      const step = Math.max(64000, totalM / 55);
       const pts = [];
-      for (let target = 0, i = 0; target <= rt.distance; target += step) {
+      for (let target = 0, i = 0; target <= totalM; target += step) {
         while (i < cumD.length - 1 && cumD[i] < target) i++;
         pts.push({ lon: coords[i][0], lat: coords[i][1], km: cumD[i] / 1000, t: new Date(depart.getTime() + cumT[i] * 1000) });
       }
-      const last = coords.length - 1;
-      pts.push({ lon: coords[last][0], lat: coords[last][1], km: totalKm, t: new Date(depart.getTime() + rt.duration * 1000), end: true });
+      itin.slice(1).forEach((w) => pts.push({ lon: w.lon, lat: w.lat, km: w.km, t: w.arrive, stop: w.label, end: w.kind === "e", n: w.n }));
+      pts.sort((a, b) => a.km - b.km || (a.stop ? 1 : -1));
       for (const p of pts) p.state = await stateAt(p.lon, p.lat);
 
-      const arrival = pts[pts.length - 1].t;
-      const tooFar = (arrival - Date.now()) / 864e5 > 15.5;
+      const tooFar = (pts[pts.length - 1].t - Date.now()) / 864e5 > 15.5;
       if (!tooFar) {
         for (let b = 0; b < pts.length; b += 50) {
           const chunk = pts.slice(b, b + 50);
@@ -273,7 +350,6 @@
           });
         }
       }
-      // group by state in driving order
       const groups = [];
       pts.forEach((p, i) => {
         const segKm = i < pts.length - 1 ? pts[i + 1].km - p.km : 0;
@@ -281,26 +357,47 @@
         if (!g) { g = { state: p.state, pts: [], km: 0 }; groups.push(g); }
         g.pts.push(p); g.km += segKm;
       });
-      renderTrip(from, dest, rt, pts, groups, tooFar, depart);
+
+      const exclude = new Set(wps.filter((w) => w.ddd).map((w) => w.ddd.id));
+      const along = dddAlongRoute(coords, cumD, radiusKm, exclude).map((x) => ({ ...x, pass: new Date(depart.getTime() + cumT[x.vtx] * 1000), leg: legEndVertex.findIndex((e) => x.vtx <= e) }));
+      state.trip = { wps, itin, legEndVertex };
+      renderTrip({ rt, itin, pts, groups, tooFar, depart, totalM, totalDwell, along, radiusMi: +$("#radius").value });
     } catch (e) {
-      out.innerHTML = `<div class="alert">Trip planning hit a pothole: ${esc(e.message)}. Try again in a moment.</div>`;
+      out.innerHTML = `<div class="alert">Trip planning hit a pothole: ${esc(e.message)}. Check each stop and try again.</div>`;
     }
   }
 
-  function renderTrip(from, dest, rt, pts, groups, tooFar, depart) {
-    const hrs = rt.duration / 3600;
-    const arrival = new Date(depart.getTime() + rt.duration * 1000);
+  function renderTrip({ rt, itin, pts, groups, tooFar, depart, totalM, totalDwell, along, radiusMi }) {
+    const driveH = rt.duration / 3600;
+    const arrival = itin[itin.length - 1].arrive;
     const worst = pts.filter((p) => p.code != null).sort((a, b) => SEVERITY(b.code) - SEVERITY(a.code))[0];
+    const hm = (h) => `${Math.floor(h)}h ${Math.round((h % 1) * 60)}m`;
     const html = [`
       <div id="tripMap"></div>
       <div class="summary">
-        <div class="stat"><b>${Math.round(mi(rt.distance / 1000)).toLocaleString()} mi</b><small>distance</small></div>
-        <div class="stat"><b>${Math.floor(hrs)}h ${Math.round((hrs % 1) * 60)}m</b><small>drive time</small></div>
+        <div class="stat"><b>${Math.round(mi(totalM / 1000)).toLocaleString()} mi</b><small>${itin.length - 2 ? itin.length - 2 + " stop" + (itin.length > 3 ? "s" : "") : "nonstop"}</small></div>
+        <div class="stat"><b>${hm(driveH)}</b><small>driving${totalDwell ? ` + ${hm(totalDwell / 3600)} stops` : ""}</small></div>
         <div class="stat"><b>${fmtTime(arrival)}</b><small>arrive ${fmtDay(arrival)}</small></div>
       </div>`];
-    if (hrs > 10) html.push(`<div class="alert">That's a ${Math.round(hrs)}-hour haul. Times assume nonstop driving — add time for stops and sleep.</div>`);
+    if (driveH > 10) html.push(`<div class="alert">That's ${Math.round(driveH)} hours behind the wheel. Times don't include sleep — consider an overnight stop.</div>`);
     if (tooFar) html.push(`<div class="alert">Forecasts only reach ~16 days out. Pick an earlier departure to see the weather.</div>`);
     else if (worst && SEVERITY(worst.code) >= 4) html.push(`<div class="alert">${wx(worst.code)[0]} Watch for <b>${wx(worst.code)[1].toLowerCase()}</b> near ${esc(worst.state)} around ${fmtTime(worst.t)}.</div>`);
+
+    // itinerary
+    html.push(`<div class="card"><h4>Itinerary</h4><ul class="itin">${itin.map((w) => {
+      const p = pts.find((x) => x.n === w.n);
+      return `<li><span class="dot ${w.kind}">${w.kind === "s" ? "A" : w.kind === "e" ? "🏁" : w.n}</span>
+        <div><b>${esc(w.ddd ? "🔥 " + w.label : w.label)}</b><div class="muted" style="font-size:12px">${w.kind === "s" ? "Start" : `Mile ${Math.round(mi(w.km))}`}${p && p.temp != null ? ` · ${wx(p.code)[0]} ${Math.round(p.temp)}°F` : ""}</div></div>
+        <span class="when">${w.kind === "s" ? `Leave ${fmtTime(w.leave)}` : w.kind === "e" ? `Arrive ${fmtTime(w.arrive)}` : `${fmtTime(w.arrive)}–${fmtTime(w.leave)}`}<br>${fmtDay(w.kind === "s" ? w.leave : w.arrive)}</span></li>`;
+    }).join("")}</ul></div>`);
+
+    // Triple D on the way
+    html.push(`<div class="card"><h4>🔥 Triple D on your route · ${along.length} within ${radiusMi} mi</h4>${along.length ? along.slice(0, 80).map((x, i) => `
+      <div class="onRoute" ${i >= 8 ? "hidden" : ""}><div class="thumb" style="width:40px;height:40px;border-radius:10px;background:var(--panel2);display:grid;place-items:center;font-size:20px">${emojiFor(x.r)}</div>
+        <div class="body" data-open="${esc(x.r.id)}"><b>${esc(x.r.name)}</b><small>${esc(x.r.city)}, ${esc(x.r.state)} · mile ${Math.round(mi(x.routeM / 1000))} · ${x.offKm < 1.6 ? "right on the way" : `${Math.round(mi(x.offKm))} mi off route`}${x.r.rating ? ` · ★ ${x.r.rating.toFixed(1)}` : ""}</small><br><small>Pass by ~${fmtTime(x.pass)} · <span class="badge ${x.r.status}">${statusLabel(x.r)}</span></small></div>
+        <button class="add" data-addstop="${esc(x.r.id)}" data-leg="${x.leg}">＋ Stop</button></div>`).join("") + (along.length > 8 ? `<button class="more" data-showall>Show all ${Math.min(along.length, 80)} spots on the way</button>` : "") + (along.length > 80 ? `<p class="muted">Showing the first 80 — narrow the distance to see fewer.</p>` : "") : `<p class="muted">None within ${radiusMi} miles. Try a wider distance.</p>`}</div>`);
+
+    // weather by state
     groups.forEach((g, gi) => {
       const temps = g.pts.map((p) => p.temp).filter((x) => x != null);
       const w = g.pts.filter((p) => p.code != null).sort((a, b) => SEVERITY(b.code) - SEVERITY(a.code))[0];
@@ -310,20 +407,38 @@
         <div><div class="sname">${esc(g.state)}</div><div class="muted" style="font-size:13px">${Math.round(mi(g.km))} mi · ${fmtTime(g.pts[0].t)}–${fmtTime(g.pts[g.pts.length - 1].t)}</div></div>
         <div class="srange">${temps.length ? `<b>${Math.round(Math.min(...temps))}°–${Math.round(Math.max(...temps))}°F</b><br>${w ? wx(w.code)[1] : ""} · ${pop}% rain` : "—"}</div>
       </summary>
-      ${g.pts.map((p) => `<div class="wxRow"><span class="muted">${fmtTime(p.t)}</span><span>${p.code != null ? wx(p.code)[0] : ""}</span><span>${p.end ? "🔥 " + esc(dest.name) : `Mile ${Math.round(mi(p.km))}`}</span><span>${p.temp != null ? `${Math.round(p.temp)}° · ${p.pop}% · ${Math.round(p.wind)} mph` : ""}</span></div>`).join("")}
+      ${g.pts.map((p) => `<div class="wxRow"><span class="muted">${fmtTime(p.t)}</span><span>${p.code != null ? wx(p.code)[0] : ""}</span><span>${p.stop ? (p.end ? "🏁 " : "📍 ") + esc(p.stop) : `Mile ${Math.round(mi(p.km))}`}</span><span>${p.temp != null ? `${Math.round(p.temp)}° · ${p.pop}% · ${Math.round(p.wind)} mph` : ""}</span></div>`).join("")}
       </details>`);
     });
-    html.push(`<div class="actions"><a class="btn primary" href="https://maps.apple.com/?saddr=${from.lat},${from.lon}&daddr=${encodeURIComponent(dest.addr ? dest.name + ", " + dest.addr : dest.name + ", " + dest.city + ", " + dest.state)}" target="_blank" rel="noopener">Start driving in Apple Maps</a></div>
+
+    const enc = (w) => (w.ddd ? `${w.ddd.name}, ${w.ddd.addr || w.ddd.city + ", " + w.ddd.state}` : `${w.lat},${w.lon}`);
+    const mids = itin.slice(1, -1);
+    const gmaps = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(`${itin[0].lat},${itin[0].lon}`)}&destination=${encodeURIComponent(enc(itin[itin.length - 1]))}${mids.length ? `&waypoints=${encodeURIComponent(mids.map(enc).join("|"))}` : ""}&travelmode=driving`;
+    const nextStop = itin[1];
+    html.push(`<div class="actions"><a class="btn primary" href="${gmaps}" target="_blank" rel="noopener">Navigate all stops in Google Maps</a>
+      <a class="btn" style="grid-column:1/-1" href="https://maps.apple.com/?saddr=${itin[0].lat},${itin[0].lon}&daddr=${encodeURIComponent(enc(nextStop))}" target="_blank" rel="noopener">Apple Maps to ${esc(nextStop.label)}</a></div>
       <p class="foot">Route: OSRM / OpenStreetMap · Weather: Open-Meteo. Forecast is for when you'll be at each checkpoint.</p>`);
     $("#tripOut").innerHTML = html.join("");
+
     if (window.L) {
       const m = L.map("tripMap", { zoomControl: false, attributionControl: false });
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { className: "darkTiles" }).addTo(m);
       const line = L.polyline(rt.geometry.coordinates.map(([x, y]) => [y, x]), { color: "#ff5a1f", weight: 4 }).addTo(m);
-      const every = Math.max(1, Math.ceil(pts.length / 12));
-      pts.forEach((p, i) => p.code != null && (i % every === 0 || p.end) && L.marker([p.lat, p.lon], { icon: L.divIcon({ className: "", html: `<div style="font-size:18px">${wx(p.code)[0]}</div>`, iconSize: [20, 20] }) }).addTo(m));
+      along.slice(0, 150).forEach((x) => L.marker([x.r.lat, x.r.lon], { icon: L.divIcon({ className: "", html: `<div class="dddPin">🔥</div>`, iconSize: [18, 18] }) })
+        .bindPopup(`<b>${esc(x.r.name)}</b><br>${esc(x.r.city)}, ${esc(x.r.state)}${x.r.rating ? "<br>★ " + x.r.rating : ""}<br><a href="#" data-open="${esc(x.r.id)}">Details</a> · <a href="#" data-addstop="${esc(x.r.id)}" data-leg="${x.leg}">Add stop</a>`).addTo(m));
+      const every = Math.max(1, Math.ceil(pts.length / 10));
+      pts.forEach((p, i) => p.code != null && !p.stop && i % every === 0 && L.marker([p.lat, p.lon], { icon: L.divIcon({ className: "", html: `<div style="font-size:16px">${wx(p.code)[0]}</div>`, iconSize: [18, 18] }) }).addTo(m));
+      itin.forEach((w) => L.marker([w.lat, w.lon], { zIndexOffset: 1000, icon: L.divIcon({ className: "", html: `<div class="wpPin" style="background:${w.kind === "s" ? "#4a8cff" : w.kind === "e" ? "#3ecf6e" : "#ff5a1f"}">${w.kind === "s" ? "A" : w.kind === "e" ? "B" : w.n}</div>`, iconSize: [22, 22] }) }).addTo(m));
       m.fitBounds(line.getBounds(), { padding: [20, 20] });
     }
+  }
+
+  function addStopFromRoute(id, leg) {
+    const r = state.byId.get(id); if (!r) return;
+    const idx = Math.max(0, Math.min(+leg || 0, stopValues().length));
+    addStop(dddLabel(r), idx);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    planTrip();
   }
 
   // ---------- nav & events
@@ -359,11 +474,20 @@
     $("#stateGrid").addEventListener("click", (e) => { const t = e.target.closest("[data-region]"); if (!t) return; state.region = t.dataset.region; state.shown = 60; renderStates(); window.scrollTo(0, 0); });
     $("#backStates").addEventListener("click", () => { state.region = null; renderStates(); });
     document.addEventListener("click", (e) => {
+      const all = e.target.closest("[data-showall]"); if (all) { all.parentElement.querySelectorAll(".onRoute[hidden]").forEach((x) => (x.hidden = false)); all.remove(); return; }
       const more = e.target.closest("[data-more]"); if (more) { state.shown += 60; renderStates(); return; }
       const open = e.target.closest("[data-open]"); if (open) { e.preventDefault(); openDetail(open.dataset.open); return; }
       if (e.target.closest("[data-close]")) { closeDetail(); return; }
       const trip = e.target.closest("[data-trip]");
-      if (trip) { const r = state.byId.get(trip.dataset.trip); $("#toInput").value = `${r.name} — ${r.city}, ${r.state}`; closeDetail(); show("trip"); if ($("#fromInput").value) planTrip(); else $("#fromInput").focus(); return; }
+      if (trip) { const r = state.byId.get(trip.dataset.trip); $("#toInput").value = dddLabel(r); closeDetail(); show("trip"); if ($("#fromInput").value) planTrip(); else $("#fromInput").focus(); return; }
+      const asStop = e.target.closest("[data-asstop]");
+      if (asStop) { const r = state.byId.get(asStop.dataset.asstop); addStop(dddLabel(r)); closeDetail(); show("trip"); return; }
+      const addS = e.target.closest("[data-addstop]");
+      if (addS) { e.preventDefault(); addStopFromRoute(addS.dataset.addstop, addS.dataset.leg); return; }
+      const mv = e.target.closest("[data-move]");
+      if (mv) { const v = stopValues(), i = +mv.closest(".stopRow").dataset.i, j = i + +mv.dataset.move; [v[i], v[j]] = [v[j], v[i]]; renderStopRows(v); return; }
+      const rm = e.target.closest("[data-remove]");
+      if (rm) { const v = stopValues(); v.splice(+rm.closest(".stopRow").dataset.i, 1); renderStopRows(v); return; }
       const item = e.target.closest(".item[data-id]"); if (item && !e.target.closest("a")) openDetail(item.dataset.id);
     });
     $("#fromGps").addEventListener("click", async () => {
@@ -371,6 +495,7 @@
       try { const c = await locate(); $("#fromInput").value = `${c.latitude.toFixed(4)}, ${c.longitude.toFixed(4)}`; } catch (_) { $("#fromInput").value = ""; alert("Couldn't get your location."); }
     });
     $("#goTrip").addEventListener("click", planTrip);
+    $("#addStop").addEventListener("click", () => addStop());
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
     load().catch((e) => { $("#metaLine").textContent = "Couldn't load data: " + e.message; });
   }
