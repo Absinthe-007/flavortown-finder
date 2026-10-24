@@ -2,7 +2,7 @@ name: Refresh restaurant data
 
 on:
   schedule:
-    - cron: "17 9 * * *"   # daily ~4am Central — Google usage is capped to stay inside the free monthly tiers
+    - cron: "17 9 * * *"   # daily ~4am Central — pulls new episodes + closed tags from Wikipedia, looks for recipes (no API keys)
   workflow_dispatch: {}
 
 permissions:
@@ -23,10 +23,6 @@ jobs:
           python-version: "3.12"
       - name: Build data
         env:
-          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
-          GOOGLE_PRO_MONTHLY_CAP: ${{ vars.GOOGLE_PRO_MONTHLY_CAP }}
-          GOOGLE_ENTERPRISE_MONTHLY_CAP: ${{ vars.GOOGLE_ENTERPRISE_MONTHLY_CAP }}
-          GOOGLE_RATINGS_PER_DAY: ${{ vars.GOOGLE_RATINGS_PER_DAY }}
           RECIPE_BUDGET: "150"
         run: python scripts/build_data.py
       - name: Commit changes
