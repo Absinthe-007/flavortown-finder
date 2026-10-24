@@ -4,12 +4,11 @@ Flavortown Finder data builder.
 
 1. Pulls every Diners, Drive-Ins and Dives restaurant from Wikipedia's episode list (CC BY-SA).
 2. Geocodes each city (US Census gazetteer first, OpenStreetMap Nominatim fallback, cached).
-3. Enriches with Google Places (open/closed, address, pin, rating, review count, price, phone)
-   using GOOGLE_PLACES_API_KEY — budgeted to stay inside Google's free monthly usage caps.
+3. Marks closed spots from Wikipedia's "(Closed)" tags (no paid APIs, no keys).
 4. Looks for Food Network recipes credited to each restaurant (best effort, cached).
 5. Writes docs/data/restaurants.json for the web app + iOS app.
 
-Run:  GOOGLE_PLACES_API_KEY=xxx python scripts/build_data.py
+Run:  python scripts/build_data.py
 """
 import json, os, re, sys, time, io, zipfile, unicodedata, difflib, html
 from datetime import datetime, timezone, timedelta
@@ -23,13 +22,6 @@ CACHE.mkdir(exist_ok=True)
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 UA = "FlavortownFinder/1.0 (personal DDD trip app; github.com/Absinthe-007)"
-GOOGLE_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-# Monthly caps sit just under Google's free tiers (5,000 Pro / 1,000 Enterprise calls per month).
-G_PRO_CAP = int(os.environ.get("GOOGLE_PRO_MONTHLY_CAP") or 4500)
-G_ENT_CAP = int(os.environ.get("GOOGLE_ENTERPRISE_MONTHLY_CAP") or 950)
-G_ENT_DAILY = int(os.environ.get("GOOGLE_RATINGS_PER_DAY") or 32)
-G_STATUS_DAYS = int(os.environ.get("GOOGLE_STATUS_REFRESH_DAYS") or 30)
-G_RATING_DAYS = int(os.environ.get("GOOGLE_RATING_REFRESH_DAYS") or 60)
 RECIPE_BUDGET = int(os.environ.get("RECIPE_BUDGET", "150"))
 
 STATES = {
@@ -240,121 +232,6 @@ def geocode(city, region, country, gaz, cache):
     return cache[key]
 
 
-# ---------------------------------------------------------------- Google Places (New)
-# Two passes, each kept under Google's free monthly caps (tracked in data/google_usage.json):
-#   1. Text Search *Pro* fields (5,000 free/mo): finds the place, open/closed status, exact address + pin.
-#   2. Place Details *Enterprise* fields (1,000 free/mo): rating, review count, price, phone.
-SEARCH_FIELDS = "places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus,places.googleMapsUri,places.primaryTypeDisplayName,places.types"
-DETAIL_FIELDS = "id,businessStatus,rating,userRatingCount,priceLevel,nationalPhoneNumber,websiteUri"
-STATUS_FIELDS = "id,businessStatus"
-PRICE = {"PRICE_LEVEL_INEXPENSIVE": "$", "PRICE_LEVEL_MODERATE": "$$", "PRICE_LEVEL_EXPENSIVE": "$$$", "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$"}
-FOODISH = {"restaurant", "food", "bar", "cafe", "bakery", "meal_takeaway", "meal_delivery", "store", "food_store", "deli", "diner", "brewery", "night_club", "liquor_store", "grocery_store", "market"}
-
-
-def g_req(url, fields, body=None):
-    h = {"X-Goog-Api-Key": GOOGLE_KEY, "X-Goog-FieldMask": fields, "Content-Type": "application/json", "User-Agent": UA}
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, headers=h, method="POST" if data else "GET")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode())
-
-
-def g_match(r, places):
-    best, score = None, 0
-    for p in places:
-        nm = (p.get("displayName") or {}).get("text", "")
-        s = difflib.SequenceMatcher(None, norm(r["name"]), norm(nm)).ratio()
-        if norm(r["name"]) and norm(nm) and (norm(r["name"]) in norm(nm) or norm(nm) in norm(r["name"])):
-            s = max(s, 0.85)
-        if not FOODISH.intersection(p.get("types") or []):
-            s -= 0.15
-        if s > score:
-            best, score = p, s
-    return best if score >= 0.6 else None
-
-
-def enrich_google(restaurants, cache, usage):
-    if not GOOGLE_KEY:
-        print("GOOGLE_PLACES_API_KEY not set — skipping Google Places enrichment")
-        return
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
-    u = usage.setdefault(month, {"pro": 0, "ent": 0})
-    today = datetime.now(timezone.utc)
-    ds = today.strftime("%Y-%m-%d")
-    age = lambda d: (today - datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc)).days if d else 9999
-    ent_today = 0
-    stop = False
-
-    def fail(e, what):
-        nonlocal stop
-        body = e.read().decode("utf-8", "replace")[:300] if hasattr(e, "read") else ""
-        print(f"google {what} error {getattr(e, 'code', '')}: {body}")
-        if getattr(e, "code", 0) in (400, 401, 403, 429):
-            stop = True
-
-    # Pass 1 — find new places (newest seasons first)
-    todo = sorted([r for r in restaurants if r["id"] not in cache], key=lambda r: -max(a["season"] for a in r["appearances"]))
-    for r in todo:
-        if stop or u["pro"] >= G_PRO_CAP:
-            break
-        q = f"{r['name']}, {r['city']}, {ABBR.get(r['state'], r['state'])}" + ("" if r["country"] == "USA" else f", {r['country']}")
-        body = {"textQuery": q, "pageSize": 5}
-        if r.get("lat"):
-            body["locationBias"] = {"circle": {"center": {"latitude": r["lat"], "longitude": r["lon"]}, "radius": 40000.0}}
-        try:
-            res = g_req("https://places.googleapis.com/v1/places:searchText", SEARCH_FIELDS, body)
-            u["pro"] += 1
-            m = g_match(r, res.get("places", []))
-            if m:
-                cache[r["id"]] = {
-                    "pid": m["id"], "gname": (m.get("displayName") or {}).get("text"), "addr": m.get("formattedAddress"),
-                    "lat": (m.get("location") or {}).get("latitude"), "lon": (m.get("location") or {}).get("longitude"),
-                    "biz": m.get("businessStatus") or "OPERATIONAL", "maps": m.get("googleMapsUri"),
-                    "type": (m.get("primaryTypeDisplayName") or {}).get("text"), "statusChecked": ds,
-                }
-            else:
-                cache[r["id"]] = {"pid": None, "statusChecked": ds}
-            time.sleep(0.1)
-        except urllib.error.HTTPError as e:
-            fail(e, "search")
-
-    # Pass 2 — ratings/price/phone for open places missing them or older than G_RATING_DAYS
-    need = [r for r in restaurants if (cache.get(r["id"]) or {}).get("pid") and cache[r["id"]].get("biz") != "CLOSED_PERMANENTLY"
-            and age(cache[r["id"]].get("ratingChecked")) >= G_RATING_DAYS]
-    need.sort(key=lambda r: (cache[r["id"]].get("ratingChecked") is not None, cache[r["id"]].get("ratingChecked") or "", -max(a["season"] for a in r["appearances"])))
-    for r in need:
-        if stop or u["ent"] >= G_ENT_CAP or ent_today >= G_ENT_DAILY:
-            break
-        c = cache[r["id"]]
-        try:
-            d = g_req(f"https://places.googleapis.com/v1/places/{c['pid']}", DETAIL_FIELDS)
-            u["ent"] += 1; ent_today += 1
-            c.update({"rating": d.get("rating"), "reviews": d.get("userRatingCount"), "price": PRICE.get(d.get("priceLevel")),
-                      "phone": d.get("nationalPhoneNumber"), "web": d.get("websiteUri"),
-                      "biz": d.get("businessStatus") or c.get("biz"), "ratingChecked": ds, "statusChecked": ds})
-            time.sleep(0.1)
-        except urllib.error.HTTPError as e:
-            fail(e, "details")
-
-    # Pass 3 — cheap status re-check (Pro fields) for anything not checked in G_STATUS_DAYS
-    stale = sorted([r for r in restaurants if (cache.get(r["id"]) or {}).get("pid") and age(cache[r["id"]].get("statusChecked")) >= G_STATUS_DAYS],
-                   key=lambda r: cache[r["id"]].get("statusChecked") or "")
-    for r in stale:
-        if stop or u["pro"] >= G_PRO_CAP:
-            break
-        c = cache[r["id"]]
-        try:
-            d = g_req(f"https://places.googleapis.com/v1/places/{c['pid']}", STATUS_FIELDS)
-            u["pro"] += 1
-            c["biz"] = d.get("businessStatus") or c.get("biz"); c["statusChecked"] = ds
-        except urllib.error.HTTPError as e:
-            if e.code == 404:  # place removed from Google — treat as closed
-                c["biz"] = "CLOSED_PERMANENTLY"; c["statusChecked"] = ds
-            else:
-                fail(e, "status")
-    print(f"google usage {month}: search/status={u['pro']}/{G_PRO_CAP}  ratings={u['ent']}/{G_ENT_CAP} (today {ent_today}); cached={len(cache)}")
-
-
 # ---------------------------------------------------------------- Food Network recipes (best effort)
 def find_recipes(restaurants, cache):
     """Searches Food Network for recipes credited 'Courtesy of <restaurant>'.
@@ -423,8 +300,6 @@ def main():
 
     gaz = gazetteer()
     gcache = load("geocache.json", {})
-    places = load("google_cache.json", {})
-    usage = load("google_usage.json", {})
     recipes = load("recipes_cache.json", {})
     manual = load("recipes_manual.json", {})
 
@@ -447,9 +322,6 @@ def main():
         r["lat"], r["lon"] = (ll or [None, None])
     save("geocache.json", gcache)
 
-    enrich_google(restaurants, places, usage)
-    save("google_cache.json", places)
-    save("google_usage.json", usage)
 
     if os.environ.get("SKIP_RECIPES") != "1":
         find_recipes(restaurants, recipes)
@@ -462,22 +334,12 @@ def main():
 
     out = []
     for r in restaurants:
-        g = places.get(r["id"]) or {}
         rec = (manual.get(r["id"]) or []) + (recipes.get(r["id"]) or [])
-        # Google is the live source of truth; Wikipedia's "(Closed)" tag is the fallback.
-        status = "closed" if r.get("wclosed") else "unknown"
-        detail = None
-        if g.get("pid"):
-            biz = g.get("biz") or "OPERATIONAL"
-            status = "open" if biz == "OPERATIONAL" else "closed"
-            detail = "Temporarily closed" if biz == "CLOSED_TEMPORARILY" else ("Permanently closed" if biz == "CLOSED_PERMANENTLY" else None)
         item = {
             "id": r["id"], "name": r["name"], "city": r["city"], "state": r["state"], "country": r["country"],
-            "lat": g.get("lat") or r["lat"], "lon": g.get("lon") or r["lon"], "exact": bool(g.get("lat")),
-            "status": status, "statusDetail": detail, "rating": g.get("rating"), "reviews": g.get("reviews"), "price": g.get("price"),
-            "cats": [g["type"]] if g.get("type") else [], "addr": g.get("addr"), "phone": g.get("phone"),
-            "maps": g.get("maps"), "web": g.get("web"), "img": None, "checked": g.get("statusChecked"), "note": r.get("note"),
-            "statusSource": "google" if g.get("pid") else ("wikipedia" if r.get("wclosed") else None),
+            "lat": r["lat"], "lon": r["lon"], "exact": False,
+            "status": "closed" if r.get("wclosed") else "unknown", "cats": [], "note": r.get("note"),
+            "statusSource": "wikipedia" if r.get("wclosed") else None,
             "appearances": sorted(r["appearances"], key=lambda a: a["season"]),
             "recipes": rec, "facts": fun_facts(r, by_city, by_state, len(by_state)),
         }
@@ -489,7 +351,7 @@ def main():
         "open": sum(1 for o in out if o["status"] == "open"),
         "closed": sum(1 for o in out if o["status"] == "closed"),
         "withRecipes": sum(1 for o in out if o["recipes"]),
-        "sources": ["Wikipedia: List of Diners, Drive-Ins and Dives episodes (CC BY-SA 4.0)", "Google Places API", "Food Network", "US Census Gazetteer", "OpenStreetMap Nominatim"],
+        "sources": ["Wikipedia: List of Diners, Drive-Ins and Dives episodes (CC BY-SA 4.0)", "Food Network", "US Census Gazetteer", "OpenStreetMap Nominatim"],
     }
     OUT.write_text(json.dumps({"meta": meta, "restaurants": out}, ensure_ascii=False, separators=(",", ":")))
     print(json.dumps(meta, indent=1))
