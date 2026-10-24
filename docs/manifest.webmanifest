@@ -1,0 +1,15 @@
+{
+  "name": "Flavortown Finder",
+  "short_name": "Flavortown",
+  "description": "Every Diners, Drive-Ins and Dives spot by state — open status, ratings, recipes, and route weather.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#16120f",
+  "theme_color": "#16120f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

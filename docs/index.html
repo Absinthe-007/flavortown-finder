@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flavortown Finder</title>
+<meta name="description" content="Find every Diners, Drive-Ins and Dives spot by state, check if it's still open, see ratings, recipes, and the weather along your drive.">
+<meta name="theme-color" content="#16120f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flavortown">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="flame">🔥</span><div><h1>Flavortown Finder</h1><p id="metaLine">Loading the road map…</p></div></div>
+  <label class="openToggle" title="Hide closed restaurants">
+    <input type="checkbox" id="openOnly" checked><span class="track"><span class="knob"></span></span><span class="lbl">Open only</span>
+  </label>
+</header>
+
+<main>
+  <!-- STATES -->
+  <section class="view active" id="view-states">
+    <div class="searchRow">
+      <input type="search" id="q" placeholder="Search restaurant, city, or dish theme" autocomplete="off">
+      <button class="iconBtn" id="nearMe" title="Sort by distance from me">📍</button>
+    </div>
+    <div class="chips" id="sortChips">
+      <button data-sort="rating" class="chip on">Top rated</button>
+      <button data-sort="name" class="chip">A–Z</button>
+      <button data-sort="newest" class="chip">Newest episode</button>
+      <button data-sort="distance" class="chip" id="distChip" hidden>Nearest</button>
+    </div>
+    <div id="stateGrid" class="stateGrid"></div>
+    <div id="stateHeader" class="stateHeader" hidden>
+      <button class="back" id="backStates">‹ States</button><h2 id="stateTitle"></h2><span id="stateCount" class="muted"></span>
+    </div>
+    <ul id="list" class="list"></ul>
+  </section>
+
+  <!-- MAP -->
+  <section class="view" id="view-map"><div id="map"></div></section>
+
+  <!-- RECIPES -->
+  <section class="view" id="view-recipes">
+    <div class="searchRow"><input type="search" id="rq" placeholder="Search recipes or restaurants" autocomplete="off"></div>
+    <p class="muted pad" id="recipeNote"></p>
+    <ul id="recipeList" class="list"></ul>
+  </section>
+
+  <!-- TRIP -->
+  <section class="view" id="view-trip">
+    <div class="card form">
+      <label>Starting from
+        <div class="row"><input id="fromInput" placeholder="City, address, or ZIP"><button class="iconBtn" id="fromGps" title="Use my location">📍</button></div>
+      </label>
+      <label>Headed to
+        <input id="toInput" placeholder="Pick a Triple D spot" list="toList" autocomplete="off">
+        <datalist id="toList"></datalist>
+      </label>
+      <label>Leaving
+        <input type="datetime-local" id="departAt">
+      </label>
+      <button class="primary" id="goTrip">Get route weather</button>
+    </div>
+    <div id="tripOut"></div>
+  </section>
+</main>
+
+<nav class="tabs">
+  <button data-view="states" class="on"><span>🗺️</span>States</button>
+  <button data-view="map"><span>📌</span>Map</button>
+  <button data-view="recipes"><span>🍳</span>Recipes</button>
+  <button data-view="trip"><span>🚗</span>Trip</button>
+</nav>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheetBg" data-close></div>
+  <article class="sheetBody" role="dialog" aria-modal="true">
+    <button class="close" data-close aria-label="Close">✕</button>
+    <div id="sheetContent"></div>
+  </article>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
