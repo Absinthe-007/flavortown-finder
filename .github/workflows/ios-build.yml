@@ -1,0 +1,86 @@
+name: iOS build + simulator test
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-build.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; ids=[x['udid'] for k,v in sorted(d.items(), reverse=True) if 'iOS' in k for x in v if x['name'].startswith('iPhone')]; print(ids[0])")
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "$UDID"
+
+      - name: Build (Xcode)
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/FlavortownFinder.xcodeproj -scheme FlavortownFinder \
+            -destination "id=${{ steps.sim.outputs.udid }}" -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Run in simulator + screenshots
+        run: |
+          UDID=${{ steps.sim.outputs.udid }}
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl location "$UDID" set 32.7767,-96.7970 || true
+          xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/FlavortownFinder.app
+          mkdir -p shots
+          xcrun simctl launch "$UDID" com.absinthe007.flavortownfinder
+          sleep 25
+          xcrun simctl io "$UDID" screenshot shots/1-launch.png
+          # crash check: is the app still running?
+          xcrun simctl spawn "$UDID" launchctl list | grep -i flavortown && echo "APP RUNNING" || (echo "APP NOT RUNNING (crashed?)"; exit 1)
+          sleep 10
+          xcrun simctl io "$UDID" screenshot shots/2-after-35s.png
+
+      - name: Crash logs (if any)
+        if: always()
+        run: ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i flavor || echo "no crash reports"
+
+      - name: Upload build log + screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test
+          path: |
+            build.log
+            shots/
+
+      - name: Publish screenshots to ci-screens branch
+        if: always()
+        run: |
+          [ -d shots ] || exit 0
+          cp build.log shots/ || true
+          cd shots
+          git init -q && git checkout -q -b ci-screens
+          git config user.name "flavortown-bot" && git config user.email "flavortown-bot@users.noreply.github.com"
+          git add . && git commit -qm "iOS simulator screenshots $(date -u +%F_%H%M)"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-screens
