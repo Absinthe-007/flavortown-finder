@@ -9,16 +9,16 @@ struct RestaurantDetailView: View {
 
     var facts: [String] {
         var f = r.facts
-        if !r.cats.isEmpty { f.append("Yelp files it under \(r.cats.joined(separator: ", ")).") }
-        if let n = r.reviews, n > 1000 { f.append("Over \(n / 1000),000 Yelp reviews — the Flavortown effect is real.") }
+        if let t = r.cats.first { f.append("Google lists it as a \(t.lowercased()).") }
+        if let n = r.reviews, n > 1000 { f.append("Over \(n / 1000),000 Google reviews — the Flavortown effect is real.") }
         if let note = r.note { f.append("Heads up: \(note).") }
         return f
     }
 
     var statusLine: String {
         switch r.status {
-        case "open": return "Open per Yelp (checked \(r.checked ?? "recently"))"
-        case "closed": return r.checked != nil ? "Closed per Yelp (checked \(r.checked!))" : "Marked closed on the episode list"
+        case "open": return "Open per Google (checked \(r.checked ?? "recently"))"
+        case "closed": return r.checked != nil ? "\(r.statusDetail ?? "Closed") per Google (checked \(r.checked!))" : "Marked closed on the episode list"
         default: return "Not verified yet — call ahead"
         }
     }
@@ -38,7 +38,7 @@ struct RestaurantDetailView: View {
                 }
 
                 HStack(spacing: 8) {
-                    stat(r.rating.map { String(format: "★ %.1f", $0) } ?? "—", "Yelp rating")
+                    stat(r.rating.map { String(format: "★ %.1f", $0) } ?? "—", "Google rating")
                     stat(r.reviews.map { "\($0)" } ?? "—", "reviews")
                     stat(r.price ?? "—", "price")
                 }
@@ -48,17 +48,25 @@ struct RestaurantDetailView: View {
                     trip.selectedTab = 3
                     dismiss()
                 } label: {
-                    Label("Route weather to here", systemImage: "car.fill").frame(maxWidth: .infinity).padding(.vertical, 6)
+                    Label("Plan a trip here", systemImage: "car.fill").frame(maxWidth: .infinity).padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
+                Button {
+                    trip.addStop(r)
+                    trip.selectedTab = 3
+                    dismiss()
+                } label: {
+                    Label("Add as a stop on my trip", systemImage: "plus.circle").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
 
                 HStack {
                     Button("Directions") { openInMaps() }.buttonStyle(.bordered).frame(maxWidth: .infinity)
                     if let phone = r.phone, let url = URL(string: "tel:" + phone.filter { "0123456789+".contains($0) }) {
                         Button("Call") { openURL(url) }.buttonStyle(.bordered).frame(maxWidth: .infinity)
                     }
-                    if let y = r.yelp, let url = URL(string: y) {
-                        Button("Yelp") { openURL(url) }.buttonStyle(.bordered).frame(maxWidth: .infinity)
+                    if let m = r.maps, let url = URL(string: m) {
+                        Button("Reviews") { openURL(url) }.buttonStyle(.bordered).frame(maxWidth: .infinity)
                     }
                 }
 
@@ -82,7 +90,7 @@ struct RestaurantDetailView: View {
                         }
                     }
                 }
-                Text("Episode data: Wikipedia (CC BY-SA). Ratings & status: Yelp. Hours change — call ahead.")
+                Text("Episode data: Wikipedia (CC BY-SA). Ratings & status: Google. Hours change — call ahead.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             .padding()

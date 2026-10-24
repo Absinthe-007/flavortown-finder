@@ -41,7 +41,9 @@ struct Restaurant: Codable, Identifiable, Hashable {
     let cats: [String]
     let addr: String?
     let phone: String?
-    let yelp: String?
+    let maps: String?
+    let web: String?
+    let statusDetail: String?
     let img: String?
     let checked: String?
     let note: String?
@@ -55,7 +57,7 @@ struct Restaurant: Codable, Identifiable, Hashable {
     }
     var isOpen: Bool { status == "open" }
     var isClosed: Bool { status == "closed" }
-    var statusLabel: String { isOpen ? "Open" : isClosed ? "Closed" : "Unverified" }
+    var statusLabel: String { isOpen ? "Open" : isClosed ? (statusDetail == "Temporarily closed" ? "Temp closed" : "Closed") : "Unverified" }
     var latestSeason: Int { appearances.map(\.season).max() ?? 0 }
     var regionKey: String {
         country == "USA" ? state : (country == "Canada" ? "\(state), Canada" : country)
