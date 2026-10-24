@@ -2,7 +2,7 @@ import SwiftUI
 import CoreLocation
 
 enum SortMode: String, CaseIterable, Identifiable {
-    case rating = "Top rated", name = "A–Z", newest = "Newest"
+    case name = "A–Z", newest = "Newest"
     var id: String { rawValue }
 }
 
@@ -57,11 +57,10 @@ struct StatesView: View {
 
 struct RestaurantList: View {
     let restaurants: [Restaurant]
-    @State private var sort: SortMode = .rating
+    @State private var sort: SortMode = .name
 
     var sorted: [Restaurant] {
         switch sort {
-        case .rating: return restaurants.sorted { ($0.rating ?? -1, $0.reviews ?? 0) > ($1.rating ?? -1, $1.reviews ?? 0) }
         case .name: return restaurants.sorted { $0.name < $1.name }
         case .newest: return restaurants.sorted { $0.latestSeason > $1.latestSeason }
         }

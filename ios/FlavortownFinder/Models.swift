@@ -57,7 +57,7 @@ struct Restaurant: Codable, Identifiable, Hashable {
     }
     var isOpen: Bool { status == "open" }
     var isClosed: Bool { status == "closed" }
-    var statusLabel: String { isOpen ? "Open" : isClosed ? (statusDetail == "Temporarily closed" ? "Temp closed" : "Closed") : "Unverified" }
+    var statusLabel: String { isOpen ? "Open" : isClosed ? "Closed" : "Likely open" }
     var latestSeason: Int { appearances.map(\.season).max() ?? 0 }
     var regionKey: String {
         country == "USA" ? state : (country == "Canada" ? "\(state), Canada" : country)

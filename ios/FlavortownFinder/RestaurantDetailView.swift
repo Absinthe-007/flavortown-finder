@@ -9,18 +9,12 @@ struct RestaurantDetailView: View {
 
     var facts: [String] {
         var f = r.facts
-        if let t = r.cats.first { f.append("Google lists it as a \(t.lowercased()).") }
-        if let n = r.reviews, n > 1000 { f.append("Over \(n / 1000),000 Google reviews — the Flavortown effect is real.") }
         if let note = r.note { f.append("Heads up: \(note).") }
         return f
     }
 
     var statusLine: String {
-        switch r.status {
-        case "open": return "Open per Google (checked \(r.checked ?? "recently"))"
-        case "closed": return r.checked != nil ? "\(r.statusDetail ?? "Closed") per Google (checked \(r.checked!))" : "Marked closed on the episode list"
-        default: return "Not verified yet — call ahead"
-        }
+        r.isClosed ? "Marked closed on the episode list" : "Not marked closed on the episode list — call ahead"
     }
 
     var body: some View {
@@ -38,9 +32,10 @@ struct RestaurantDetailView: View {
                 }
 
                 HStack(spacing: 8) {
-                    stat(r.rating.map { String(format: "★ %.1f", $0) } ?? "—", "Google rating")
-                    stat(r.reviews.map { "\($0)" } ?? "—", "reviews")
-                    stat(r.price ?? "—", "price")
+                    Link(destination: reviewURL(google: true)) { Label("Google reviews", systemImage: "star.fill").frame(maxWidth: .infinity) }
+                        .buttonStyle(.bordered)
+                    Link(destination: reviewURL(google: false)) { Label("Yelp reviews", systemImage: "star.fill").frame(maxWidth: .infinity) }
+                        .buttonStyle(.bordered)
                 }
 
                 Button {
@@ -65,9 +60,6 @@ struct RestaurantDetailView: View {
                     if let phone = r.phone, let url = URL(string: "tel:" + phone.filter { "0123456789+".contains($0) }) {
                         Button("Call") { openURL(url) }.buttonStyle(.bordered).frame(maxWidth: .infinity)
                     }
-                    if let m = r.maps, let url = URL(string: m) {
-                        Button("Reviews") { openURL(url) }.buttonStyle(.bordered).frame(maxWidth: .infinity)
-                    }
                 }
 
                 card("Fun facts") {
@@ -90,12 +82,20 @@ struct RestaurantDetailView: View {
                         }
                     }
                 }
-                Text("Episode data: Wikipedia (CC BY-SA). Ratings & status: Google. Hours change — call ahead.")
+                Text("Episode data: Wikipedia (CC BY-SA). Closed tags: Wikipedia episode list. Hours change — call ahead.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             .padding()
         }
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    func reviewURL(google: Bool) -> URL {
+        var c = URLComponents(string: google ? "https://www.google.com/maps/search/" : "https://www.yelp.com/search")!
+        c.queryItems = google
+            ? [URLQueryItem(name: "api", value: "1"), URLQueryItem(name: "query", value: "\(r.name) \(r.city) \(r.state)")]
+            : [URLQueryItem(name: "find_desc", value: r.name), URLQueryItem(name: "find_loc", value: "\(r.city), \(r.state)")]
+        return c.url!
     }
 
     var foodNetworkSearch: URL {
