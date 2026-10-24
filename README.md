@@ -2,13 +2,13 @@
 
 Every *Diners, Drive-Ins and Dives* restaurant (1,673 and counting), organized by state, with:
 
-- **Open-only filter**: hides closed spots (permanently or temporarily). Google's live status wins; Wikipedia's "(Closed)" tags are the fallback.
-- **Google ratings, review counts, price, phone, exact address, and website**
+- **Open-only filter**: hides the spots marked "(Closed)" on Wikipedia's episode list. Everything else shows as **Likely open**, so call ahead.
+- **Reviews in one tap**: each spot links to its Google and Yelp reviews. There are no API keys and nothing to pay for.
 - **Recipes tab**: Food Network recipes matched to each restaurant, plus a one-tap recipe search for any spot.
 - **Road trips with multiple stops**: start anywhere, add as many stops as you like (Triple D spots or any city/address), and reorder them. You can set how long you'll spend at each stop.
 - **Triple D along the way**: every spot within 5–50 miles of your route, with the mile marker, how far off the route it is, and when you'll pass it. Tap **+ Stop** to add one to the trip in the right order.
 - **Trip weather**: the forecast *for when you'll be at each point*, broken down by state, including at each stop.
-- **Fun facts**: the episode, season, and air date, repeat visits, how many DDD spots the city and state have, and Google's restaurant type.
+- **Fun facts**: the episode, season, and air date, repeat visits, how many DDD spots the city and state have.
 
 There are two front ends that read the same data file:
 
@@ -26,31 +26,9 @@ There are two front ends that read the same data file:
 3. Your app will be live at **https://absinthe-007.github.io/flavortown-finder/**.
 4. On your iPhone, open that link in **Safari** → Share → **Add to Home Screen**. It now opens full-screen like a real app.
 
-## 2. Turn on Google Places (ratings and open/closed)
+## 2. Data updates (no keys needed)
 
-1. Go to https://console.cloud.google.com, create a project (e.g. "flavortown"), and attach a billing account. Google requires a card on file even for the free tier.
-2. **APIs & Services → Library**: search for **Places API (New)** and click **Enable**.
-3. **APIs & Services → Credentials → Create credentials → API key**. Then **Edit API key → API restrictions → Restrict key → Places API (New)** → Save.
-4. Optional but smart: **Billing → Budgets & alerts**, add a $1 budget so you get an email if anything ever costs money.
-5. In the GitHub repo, go to **Settings → Secrets and variables → Actions → New repository secret**. Name it `GOOGLE_PLACES_API_KEY` and paste the key.
-6. **Actions → Refresh restaurant data → Run workflow.**
-
-### What it costs: $0 if you leave the defaults
-
-Google gives free calls every month for each Places pricing tier. The job tracks its own usage in `data/google_usage.json` and stops before it reaches either cap:
-
-| What | Google tier | Free per month | Job's cap |
-|---|---|---|---|
-| Find each spot, open/closed status, exact address and pin | Text Search / Details **Pro** | 5,000 | 4,500 |
-| Rating, review count, price, phone, website | Place Details **Enterprise** | 1,000 | 950 (32 a day) |
-
-- **Day 1:** every restaurant (all 1,673) gets matched to Google with its open/closed status and exact map pin.
-- **Ratings** fill in at about 32 a day, open spots first, newest seasons first. All of them should be filled in within about 2 months, and each one is refreshed every 60 days after that.
-- **Open/closed** is re-checked every 30 days.
-
-You can tune these under **Settings → Variables**: `GOOGLE_PRO_MONTHLY_CAP`, `GOOGLE_ENTERPRISE_MONTHLY_CAP`, and `GOOGLE_RATINGS_PER_DAY`. If you raise `GOOGLE_RATINGS_PER_DAY` to 200, ratings fill in about a week. That goes past the free 1,000 a month, and Google charges about $20 per 1,000 rating lookups beyond it, so roughly $14 total.
-
-> Google's Maps Platform terms limit how long you may store Places data (place IDs can be kept indefinitely; most other fields are meant to be refreshed rather than stored long-term) and ask that you show Google attribution. The app shows "Ratings & status: Google" on every restaurant and the job refreshes data on a rolling 30/60-day cycle, which is a reasonable personal-project setup. If you ever make this a commercial app, review https://cloud.google.com/maps-platform/terms first.
+The **Refresh restaurant data** workflow runs daily. It pulls new episodes and any new "(Closed)" tags from Wikipedia, and looks for Food Network recipes. You don't have to set anything up. To run it right away, go to **Actions → Refresh restaurant data → Run workflow**.
 
 ## 3. Recipes
 
@@ -81,11 +59,11 @@ The iOS app uses Apple Maps routing (`MKDirections`) and Apple's reverse geocodi
 
 1. Pulls every episode and restaurant from Wikipedia's *List of Diners, Drive-Ins and Dives episodes* (CC BY-SA).
 2. Geocodes each city with the U.S. Census gazetteer, falling back to OpenStreetMap.
-3. Adds Google Places data (incremental, kept inside the free monthly caps).
+3. Marks closed spots from Wikipedia's "(Closed)" tags.
 4. Looks up Food Network recipes (best effort).
 5. Writes `docs/data/restaurants.json`.
 
-Run it locally with `GOOGLE_PLACES_API_KEY=... python3 scripts/build_data.py`. It needs Python 3.10+ and has no dependencies.
+Run it locally with `python3 scripts/build_data.py`. It needs Python 3.10+ and has no dependencies.
 
 Free services used by the app:
 
