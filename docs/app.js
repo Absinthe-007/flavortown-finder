@@ -13,7 +13,7 @@
   const regionKey = (r) => (r.country === "USA" ? r.state : r.country === "Canada" ? `${r.state}, Canada` : r.country);
   const regionName = (k) => STATE_NAMES[k] || k;
   const visible = (r) => !state.openOnly || r.status !== "closed";
-  const statusLabel = (r) => (r.status === "open" ? "Open" : r.status === "closed" ? "Closed" : "Unverified");
+  const statusLabel = (r) => (r.status === "open" ? "Open" : r.status === "closed" ? (r.statusDetail === "Temporarily closed" ? "Temp closed" : "Closed") : "Unverified");
   const stars = (n) => (n == null ? "" : `<span class="stars">★ ${n.toFixed(1)}</span>`);
   const emojiFor = (r) => {
     const t = (r.cats.join(" ") + " " + r.name + " " + r.appearances.map((a) => a.title).join(" ")).toLowerCase();
@@ -129,31 +129,32 @@
     history.replaceState(null, "", `#r=${encodeURIComponent(id)}`);
     const dest = r.addr ? `${r.name}, ${r.addr}` : `${r.name}, ${r.city}, ${r.state}`;
     const facts = [...r.facts];
-    if (r.cats.length) facts.push(`Yelp files it under ${r.cats.join(", ")}.`);
-    if (r.reviews > 1000) facts.push(`Over ${Math.floor(r.reviews / 1000).toLocaleString()},000 Yelp reviews — the Flavortown effect is real.`);
+    if (r.cats.length) facts.push(`Google lists it as a ${r.cats[0].toLowerCase()}.`);
+    if (r.reviews > 1000) facts.push(`Over ${Math.floor(r.reviews / 1000).toLocaleString()},000 Google reviews — the Flavortown effect is real.`);
     if (r.note) facts.push(`Heads up: ${r.note}.`);
-    const statusLine = r.status === "open" ? `Open per Yelp (checked ${r.checked})` : r.status === "closed" ? (r.statusSource === "yelp" ? `Closed per Yelp (checked ${r.checked})` : "Marked closed on the episode list") : "Not verified yet — call ahead";
+    const statusLine = r.status === "open" ? `Open per Google (checked ${r.checked})` : r.status === "closed" ? (r.statusSource === "google" ? `${r.statusDetail || "Closed"} per Google (checked ${r.checked})` : "Marked closed on the episode list") : "Not verified yet — call ahead";
     $("#sheetContent").innerHTML = `
       <div class="hero" ${r.img ? `style="background-image:url('${esc(r.img)}')"` : ""}>${r.img ? "" : emojiFor(r)}</div>
       <h2>${esc(r.name)}</h2>
       <div class="muted">${esc(r.addr || `${r.city}, ${regionName(r.state)}`)}</div>
       <div class="meta" style="margin-top:8px;display:flex;gap:8px;align-items:center"><span class="badge ${r.status}">${statusLabel(r)}</span><span class="muted" style="font-size:13px">${statusLine}</span></div>
       <div class="statRow">
-        <div class="stat"><b>${r.rating != null ? "★ " + r.rating.toFixed(1) : "—"}</b><small>Yelp rating</small></div>
+        <div class="stat"><b>${r.rating != null ? "★ " + r.rating.toFixed(1) : "—"}</b><small>Google rating</small></div>
         <div class="stat"><b>${r.reviews != null ? r.reviews.toLocaleString() : "—"}</b><small>reviews</small></div>
         <div class="stat"><b>${esc(r.price || "—")}</b><small>price</small></div>
       </div>
       <div class="actions">
         <button class="btn primary" data-trip="${esc(r.id)}">🚗 Route weather to here</button>
         <a class="btn" href="https://maps.apple.com/?daddr=${encodeURIComponent(dest)}" target="_blank" rel="noopener">Apple Maps</a>
-        <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}" target="_blank" rel="noopener">Google Maps</a>
+        <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}" target="_blank" rel="noopener">Directions (Google)</a>
         ${r.phone ? `<a class="btn" href="tel:${esc(r.phone.replace(/[^0-9+]/g, ""))}">📞 Call</a>` : ""}
-        ${r.yelp ? `<a class="btn" href="${esc(r.yelp)}" target="_blank" rel="noopener">Yelp page</a>` : `<a class="btn" href="https://www.yelp.com/search?find_desc=${encodeURIComponent(r.name)}&find_loc=${encodeURIComponent(r.city + ", " + r.state)}" target="_blank" rel="noopener">Find on Yelp</a>`}
+        <a class="btn" href="${esc(r.maps || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name + " " + r.city + " " + r.state)}`)}" target="_blank" rel="noopener">Reviews &amp; hours</a>
+        ${r.web ? `<a class="btn" href="${esc(r.web)}" target="_blank" rel="noopener">Website</a>` : ""}
       </div>
       <div class="card"><h4>Fun facts</h4><ul class="facts">${facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></div>
       <div class="card"><h4>On the show</h4>${r.appearances.map((a) => `<div class="ep"><b>S${a.season} · E${esc(a.episode)}</b> — ${esc(a.title)}<div class="muted">${esc(a.airdate)}</div></div>`).join("")}</div>
       <div class="card"><h4>Recipes</h4>${r.recipes.length ? r.recipes.map((x) => `<a class="recipe" href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}<span>↗</span></a>`).join("") : `<a class="recipe" href="${fnSearch(r)}" target="_blank" rel="noopener">Search Food Network<span>↗</span></a>`}</div>
-      <p class="foot">Episode data: Wikipedia (CC BY-SA). Ratings & status: Yelp. Always call ahead — hours change.</p>`;
+      <p class="foot">Episode data: Wikipedia (CC BY-SA). Ratings &amp; status: Google. Always call ahead — hours change.</p>`;
     $("#sheet").hidden = false;
     $(".sheetBody").scrollTop = 0;
   }
